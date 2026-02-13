@@ -1,0 +1,14 @@
+python-dotenv
+dashscope
+langchain
+langchain-community
+crewai
+pydantic
+yfinance
+pandas
+matplotlib
+faiss-cpu
+pypdf
+networkx
+tqdm
+sentence-transformers
