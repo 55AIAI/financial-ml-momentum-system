@@ -57,7 +57,7 @@ DOCS: List[Document] = build_docs()
 def rag_search(query: str, k: int = 5) -> List[Dict[str, Any]]:
     """Very simple lexical retrieval over PDF chunks."""
     if not DOCS:
-        return [{"id": "none", "content": "PDF index unavailable"}]
+        raise FileNotFoundError("Financial risk reports are missing. Add source PDFs before risk analysis.")
 
     words = [w.lower() for w in query.split() if len(w) > 3]
     scored: List[tuple] = []
@@ -121,6 +121,8 @@ def get_global_risk() -> Dict[str, Any]:
         "global macro risk, financial stability, volatility, debt, uncertainty", k=8
     )
     ctx = "\n\n".join(c.get("content", "") for c in chunks)
+    if not any(c.get("content") for c in chunks):
+        raise ValueError("No risk evidence was retrieved; refusing to assign a risk level.")
     info = analyze_risk_from_text(ctx)
     # Drop raw_score from external API response
     return {"risk_level": info["risk_level"], "risks": info["risks"]}
