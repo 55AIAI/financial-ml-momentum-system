@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import math
+from datetime import date
 from pathlib import Path
 
 from evidence import load_evidence, retrieve
@@ -11,8 +12,33 @@ from finance_mcp import compute_short_term_signals
 BASE = Path(__file__).resolve().parent
 
 
-def build_report(csv_path, symbols, as_of, reports_dir=None, use_llm=False):
+def assess_data_quality(signals, as_of, max_price_age_days=7):
+    if isinstance(max_price_age_days, bool) or not isinstance(max_price_age_days, int) or max_price_age_days < 0:
+        raise ValueError("max_price_age_days must be a nonnegative integer")
+    cutoff = date.fromisoformat(as_of)
+    ages = {}
+    warnings = []
+    for row in signals:
+        age = (cutoff - date.fromisoformat(row["price_date"])).days
+        if age < 0:
+            raise ValueError("Future price in snapshot")
+        ages[row["symbol"]] = age
+        if age > max_price_age_days:
+            warnings.append({"code": "STALE_PRICE", "symbol": row["symbol"],
+                             "message": f"{row['symbol']}: last price is {age} calendar days before the cutoff."})
+        if row["risk_max_gap_days"] > 7:
+            warnings.append({"code": "SPARSE_PRICE_WINDOW", "symbol": row["symbol"],
+                             "message": f"{row['symbol']}: a price gap exceeds 7 calendar days; "
+                                        "252-session annualization may be inappropriate."})
+    if len({row["price_date"] for row in signals}) > 1:
+        warnings.append({"code": "MIXED_PRICE_DATES",
+                         "message": "Tickers have different latest price dates; momentum windows are not aligned."})
+    return {"max_price_age_days": max_price_age_days, "price_age_days": ages, "warnings": warnings}
+
+
+def build_report(csv_path, symbols, as_of, reports_dir=None, use_llm=False, max_price_age_days=7):
     signals = compute_short_term_signals(symbols, csv_path, as_of)
+    quality = assess_data_quality(signals, as_of, max_price_age_days)
     records = load_evidence(reports_dir, as_of) if reports_dir else []
     selected = {}
     for signal in signals:
@@ -22,11 +48,15 @@ def build_report(csv_path, symbols, as_of, reports_dir=None, use_llm=False):
     notes = None
     if use_llm:
         from agents import generate_notes
-        notes = generate_notes(signals, evidence)
+        notes = generate_notes(signals, evidence, quality)
     report = {"as_of": as_of, "mode": "agents" if use_llm else "deterministic",
               "signals": signals, "sources": evidence, "agent_notes": notes,
+              "data_quality": quality,
               "methodology": {"daily_observations": 1, "weekly_observations": 5,
                               "monthly_observations": 21, "momentum_weights": [0.4, 0.4, 0.2],
+                              "risk_return_observations": 21, "annualization_sessions": 252,
+                              "volatility": "sample standard deviation of simple returns, annualized",
+                              "drawdown": "largest peak-to-trough price decline in the last 22 observations",
                               "allocation": "illustrative equal weighting; no optimization"},
               "limitations": ["No trained ML model or backtest.",
                               "Lexical retrieval; source presence does not prove a claim.",
@@ -38,6 +68,15 @@ def build_report(csv_path, symbols, as_of, reports_dir=None, use_llm=False):
 
 
 def evaluate_report(report):
+    try:
+        return _evaluate_report(report)
+    except (KeyError, ValueError, TypeError, OverflowError) as exc:
+        return {"passed": False, "issues": ["Malformed report: " + str(exc)],
+                "scope": "structure, numeric validity, dates and citation support; not investment performance"}
+
+
+def _evaluate_report(report):
+    cutoff = date.fromisoformat(report["as_of"])
     signals = report.get("signals") or []
     symbols = [row["symbol"] for row in signals]
     issues = []
@@ -51,17 +90,29 @@ def evaluate_report(report):
             issues.append("Momentum does not match component returns")
         if row["last_close"] <= 0 or not 0 < row["weight_pct"] <= 100:
             issues.append("Invalid price or weight")
-        if row["price_date"] > report["as_of"]:
-            issues.append("Future price in snapshot")
-        for key in ("last_close", "daily_pct", "weekly_pct", "monthly_pct", "momentum_score", "weight_pct"):
+        price_date = date.fromisoformat(row["price_date"])
+        window_start = date.fromisoformat(row["risk_window_start"])
+        if not window_start < price_date <= cutoff:
+            issues.append("Invalid price window dates")
+        if not 0 <= row["max_drawdown_21_pct"] <= 100 or row["volatility_21_annualized_pct"] < 0:
+            issues.append("Invalid risk metric")
+        if not isinstance(row["risk_max_gap_days"], int) or not 1 <= row["risk_max_gap_days"] <= (price_date - window_start).days:
+            issues.append("Invalid risk window gap")
+        if row["observation_count"] < 22:
+            issues.append("Insufficient observations")
+        for key in ("last_close", "daily_pct", "weekly_pct", "monthly_pct", "momentum_score", "weight_pct",
+                    "max_drawdown_21_pct", "volatility_21_annualized_pct"):
             if not math.isfinite(row[key]):
                 issues.append("Non-finite calculation")
-    if any(source["published_at"] > report["as_of"] for source in report["sources"]):
+    quality = report["data_quality"]
+    if quality != assess_data_quality(signals, report["as_of"], quality["max_price_age_days"]):
+        issues.append("Data quality diagnostics do not match the price dates")
+    if any(date.fromisoformat(source["published_at"]) > cutoff for source in report["sources"]):
         issues.append("Future document in snapshot")
     if report.get("agent_notes") is not None:
         from agents import validate_notes
         try:
-            validate_notes(report["agent_notes"], signals, report["sources"])
+            validate_notes(report["agent_notes"], signals, report["sources"], quality)
         except ValueError as exc:
             issues.append(str(exc))
     return {"passed": not issues, "issues": issues,
@@ -80,9 +131,29 @@ def render_markdown(report):
         lines.append("| " + " | ".join(safe(row[key]) for key in
             ("symbol", "last_close", "price_date", "daily_pct", "weekly_pct", "monthly_pct",
              "momentum_score", "weight_pct")) + " |")
-    lines += ["", "Momentum = 0.4 × 1-observation return + 0.4 × 5-observation return + "
-              "0.2 × 21-observation return. Weights are an equal-weight illustration.", "",
-              "## Document evidence", ""]
+    lines += ["", "Momentum = 0.4 * 1-observation return + 0.4 * 5-observation return + "
+              "0.2 * 21-observation return. Weights are an equal-weight illustration.", "",
+              "## Risk over the last 21 return observations", "",
+              "| Ticker | Window start | Window end | Annualized volatility % | Max drawdown % |",
+              "|---|---|---|---:|---:|"]
+    for row in report["signals"]:
+        lines.append("| " + " | ".join(safe(row[key]) for key in
+            ("symbol", "risk_window_start", "price_date", "volatility_21_annualized_pct",
+             "max_drawdown_21_pct")) + " |")
+    lines += ["", "Volatility uses sample standard deviation and 252 sessions per year. "
+              "Drawdown is a positive decline from a running price peak. These are historical "
+              "window statistics, not forecasts.", "", "## Data quality", ""]
+    quality = report["data_quality"]
+    lines.append(f"Stale-price threshold: {quality['max_price_age_days']} calendar days.")
+    lines.append("")
+    for symbol, age in quality["price_age_days"].items():
+        lines.append(f"- {safe(symbol)}: latest price is {age} calendar days before the cutoff.")
+    if quality["warnings"]:
+        lines += ["", *["- **" + safe(warning["code"]) + "**: " + safe(warning["message"])
+                         for warning in quality["warnings"]]]
+    else:
+        lines += ["", "No stale-price, mixed-date or sparse-window warnings."]
+    lines += ["", "## Document evidence", ""]
     if not report["sources"]:
         lines.append("No relevant document evidence available. No risk level is inferred.")
     for source in report["sources"]:
@@ -123,6 +194,8 @@ def main(argv=None):
     parser.add_argument("--as-of", help="Inclusive ISO date, e.g. 2025-02-11")
     parser.add_argument("--reports", type=Path, help="Directory containing index.json and source reports")
     parser.add_argument("--output-dir", type=Path, default=BASE / "output")
+    parser.add_argument("--max-price-age-days", type=int, default=7,
+                        help="Warn when latest prices exceed this age in calendar days (default: 7)")
     parser.add_argument("--llm", action="store_true", help="Explicitly enable optional Qwen/CrewAI calls")
     args = parser.parse_args(argv)
     csv_path = args.csv or (BASE / "demo/prices.csv" if args.demo else None)
@@ -135,12 +208,14 @@ def main(argv=None):
         if args.llm:
             from dotenv import load_dotenv
             load_dotenv(BASE / ".env")
-        report = build_report(csv_path, symbols, as_of, reports, args.llm)
+        report = build_report(csv_path, symbols, as_of, reports, args.llm, args.max_price_age_days)
         output = save_report(report, args.output_dir)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError, ImportError) as exc:
         parser.exit(1, f"Research failed: {exc}\n")
     print(f"Report written to {output / 'report.md'}")
     print("Integrity checks:", json.dumps(report["checks"]))
+    for warning in report["data_quality"]["warnings"]:
+        print(f"Warning [{warning['code']}]: {warning['message']}")
 
 
 if __name__ == "__main__":

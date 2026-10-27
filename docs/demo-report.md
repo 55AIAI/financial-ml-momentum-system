@@ -10,7 +10,25 @@ Mode: deterministic
 | ALPHA | 129.0 | 2025-02-11 | 0.78 | 4.03 | 19.44 | 5.81 | 50.0 |
 | BETA | 135.5 | 2025-02-11 | -0.37 | -1.81 | -7.19 | -2.31 | 50.0 |
 
-Momentum = 0.4 × 1-observation return + 0.4 × 5-observation return + 0.2 × 21-observation return. Weights are an equal-weight illustration.
+Momentum = 0.4 * 1-observation return + 0.4 * 5-observation return + 0.2 * 21-observation return. Weights are an equal-weight illustration.
+
+## Risk over the last 21 return observations
+
+| Ticker | Window start | Window end | Annualized volatility % | Max drawdown % |
+|---|---|---|---:|---:|
+| ALPHA | 2025-01-13 | 2025-02-11 | 0.71 | 0.0 |
+| BETA | 2025-01-13 | 2025-02-11 | 0.12 | 7.19 |
+
+Volatility uses sample standard deviation and 252 sessions per year. Drawdown is a positive decline from a running price peak. These are historical window statistics, not forecasts.
+
+## Data quality
+
+Stale-price threshold: 7 calendar days.
+
+- ALPHA: latest price is 0 calendar days before the cutoff.
+- BETA: latest price is 0 calendar days before the cutoff.
+
+No stale-price, mixed-date or sparse-window warnings.
 
 ## Document evidence
 

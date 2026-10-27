@@ -9,3 +9,5 @@ output/
 data/
 .idea/
 .pytest_cache/
+.test-tmp/
+.ruff_cache/

@@ -31,6 +31,8 @@ organizations and reports are entirely synthetic.
 | Price engine | Validates positive finite prices, unique ticker/date pairs and at least 22 observations |
 | Historical cutoff | Excludes prices and documents dated after the requested analysis date |
 | Returns | Calculates 1-, 5- and 21-observation returns; prefers adjusted close if present |
+| Historical risk | 21-return sample volatility annualized with 252 sessions; 22-price-window maximum drawdown |
+| Data quality | Calendar-day price ages, configurable stale-price threshold, mixed end dates and sparse windows |
 | Momentum | 0.4 × daily + 0.4 × weekly + 0.2 × monthly, before rounding |
 | Example allocation | Equal weighting with integer basis points summing to 100% |
 | Retrieval | Lexical matches scoped to the ticker and explicit publication date |
@@ -50,6 +52,24 @@ CSV columns: Symbol (or Ticker), Date in YYYY-MM-DD format, and Close
 (or Adj Close). The date is inclusive. Horizons count **observations**, which
 should be trading sessions in a real dataset. Sorting is automatic; duplicates
 and insufficient history cause explicit errors rather than silently dropping tickers.
+
+Risk fields use the same last 22 eligible observations as the monthly return.
+Annualized volatility assumes consecutive trading-session prices and a 252-session
+year. Drawdown is the largest historical peak-to-trough price decline in that
+window, expressed as a positive percentage. Neither statistic predicts future risk.
+
+The report and terminal warn if a ticker's latest price is more than 7 calendar
+days old, if tickers end on different dates, or if any gap in a risk window
+exceeds 7 calendar days. Warnings do not stop analysis or silently realign data.
+The stale-price threshold is configurable:
+
+```bash
+python main.py --demo --as-of 2025-02-20 --max-price-age-days 3
+```
+
+The 7-day gap warning is a coarse diagnostic, not an exchange-calendar check.
+The caller remains responsible for supplying session-frequency data. Inspect
+`data_quality` in JSON and the corresponding Markdown section before comparing tickers.
 
 A reports directory contains an index.json plus .txt, .md or text-based .pdf files:
 
@@ -73,7 +93,7 @@ python main.py --demo --llm
 ```
 
 The analyst drafts structured notes; the reviewer checks them against the same
-snapshot. A deterministic validator rejects unknown sources, cross-company
+snapshot, including data-quality diagnostics. A deterministic validator rejects unknown sources, cross-company
 citations, non-verbatim quotes and unsupported numeric values. Python remains
 the source of all calculated numbers.
 
@@ -88,6 +108,9 @@ python -m unittest discover -s tests -v
 docker build -t financial-research .
 docker run --rm financial-research --demo
 ```
+
+The 48 offline tests cover price and evidence cutoffs, known risk paths, rolling
+windows, freshness thresholds, malformed reports and CLI exports.
 
 CI runs the offline tests and uploads the synthetic report as a workflow artifact.
 [Methodology and limitations](docs/methodology.md) explain exactly what the checks
