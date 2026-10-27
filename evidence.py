@@ -1,38 +1,50 @@
 """Date- and ticker-scoped lexical retrieval with explicit source metadata."""
 import json
 import re
-from datetime import date
 from pathlib import Path
+
+from inputs import iso_date, ticker as normalize_ticker
 
 
 def load_evidence(folder, as_of):
     folder = Path(folder).resolve()
-    cutoff = date.fromisoformat(as_of)
+    cutoff = iso_date(as_of, "as_of")
     manifest = json.loads((folder / "index.json").read_text(encoding="utf-8"))
     if not isinstance(manifest, list):
         raise ValueError("Report index must be a list")
     records = []
     source_ids = set()
+    seen_files = set()
     for entry in manifest:
         if not isinstance(entry, dict):
             raise ValueError("Each report index entry must be an object")
-        published = date.fromisoformat(entry["published_at"])
+        published = iso_date(entry["published_at"], "published_at")
         if published > cutoff:
             continue
-        path = (folder / entry["filename"]).resolve()
+        filename = entry["filename"]
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("Report filename must be a nonempty string")
+        symbol = normalize_ticker(entry["ticker"])
+        path = (folder / filename).resolve()
         if not path.is_relative_to(folder):
             raise ValueError("Report filename must stay inside the report directory")
+        if path in seen_files:
+            raise ValueError("Duplicate report file in index")
+        seen_files.add(path)
         if path.stat().st_size > 10 * 1024 * 1024:
             raise ValueError("Report exceeds the 10 MiB limit")
-        symbol = str(entry["ticker"]).strip().upper()
-        if not symbol:
-            raise ValueError("Report ticker cannot be empty")
         if path.suffix.lower() == ".pdf":
             from pypdf import PdfReader
-            reader = PdfReader(path)
-            if len(reader.pages) > 300:
-                raise ValueError("PDF exceeds 300 pages")
-            pages = [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+            from pypdf.errors import PdfReadError
+            try:
+                reader = PdfReader(path)
+                if reader.is_encrypted:
+                    raise ValueError("Encrypted PDF reports are not supported")
+                if len(reader.pages) > 300:
+                    raise ValueError("PDF exceeds 300 pages")
+                pages = [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+            except PdfReadError as exc:
+                raise ValueError(f"Invalid PDF report {filename}: {exc}") from exc
         elif path.suffix.lower() in {".txt", ".md"}:
             pages = [(None, path.read_text(encoding="utf-8"))]
         else:
@@ -55,8 +67,11 @@ def load_evidence(folder, as_of):
 
 
 def retrieve(records, ticker, query="business growth risk debt revenue", limit=3):
-    if not 1 <= limit <= 10:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10:
         raise ValueError("Retrieval limit must be between 1 and 10")
+    ticker = normalize_ticker(ticker)
+    if not isinstance(query, str):
+        raise ValueError("Retrieval query must be a string")
     words = set(re.findall(r"\w{3,}", query.casefold()))
     candidates = []
     for record in records:

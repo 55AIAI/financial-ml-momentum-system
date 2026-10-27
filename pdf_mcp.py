@@ -3,10 +3,9 @@
 This is not a complete Model Context Protocol server. No inferred Low/Medium/High
 risk score is returned from keyword counts.
 """
-import json
-import sys
 from pathlib import Path
 from evidence import load_evidence, retrieve
+from local_rpc import dispatch, serve
 
 
 def rag_search(query, k=5, reports_dir=None, as_of=None, ticker="*"):
@@ -22,31 +21,14 @@ def get_global_risk(reports_dir=None, as_of=None, ticker="*"):
 
 
 def handle_call(request):
-    try:
-        if request.get("method") != "tools/call":
-            raise ValueError("Only local tools/call is supported")
-        params = request["params"]
-        args = params.get("arguments", {})
-        if params["name"] == "get_global_risk":
-            result = get_global_risk(args.get("reports_dir"), args.get("as_of"), args.get("ticker", "*"))
-        elif params["name"] == "rag_search_risk":
-            result = rag_search(args["query"], args.get("k", 5), args.get("reports_dir"),
-                                args.get("as_of"), args.get("ticker", "*"))
-        else:
-            raise ValueError("Unknown tool")
-        return {"jsonrpc": "2.0", "id": request.get("id"),
-                "result": {"content": [{"type": "text", "text": json.dumps(result)}]}}
-    except (KeyError, ValueError, TypeError, OSError) as exc:
-        return {"jsonrpc": "2.0", "id": request.get("id"),
-                "error": {"code": -32602, "message": str(exc)}}
+    return dispatch(request, {
+        "get_global_risk": lambda args: get_global_risk(
+            args.get("reports_dir"), args.get("as_of"), args.get("ticker", "*")),
+        "rag_search_risk": lambda args: rag_search(
+            args["query"], args.get("k", 5), args.get("reports_dir"),
+            args.get("as_of"), args.get("ticker", "*")),
+    })
 
 
 if __name__ == "__main__":
-    try:
-        request = json.loads(sys.stdin.readline())
-        if not isinstance(request, dict):
-            raise ValueError("Request must be an object")
-        print(json.dumps(handle_call(request)))
-    except (ValueError, TypeError):
-        print(json.dumps({"jsonrpc": "2.0", "id": None,
-                          "error": {"code": -32700, "message": "Invalid JSON"}}))
+    serve(handle_call)

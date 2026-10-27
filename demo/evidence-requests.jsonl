@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":"evidence","method":"tools/call","params":{"name":"rag_search_risk","arguments":{"query":"business risk","ticker":"ALPHA","k":3,"reports_dir":"demo/reports","as_of":"2025-02-11"}}}
+{"jsonrpc":"2.0","id":"risk","method":"tools/call","params":{"name":"get_global_risk","arguments":{"ticker":"BETA","reports_dir":"demo/reports","as_of":"2025-02-11"}}}

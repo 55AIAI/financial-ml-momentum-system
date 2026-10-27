@@ -82,6 +82,24 @@ interpretations. Supplied source dates can be incorrect, and a provider can fail
 No live API quality, financial returns, or claimed improvement from multiple
 agents is asserted by offline tests.
 
+## Input and local-tool boundaries
+
+Dates are strict YYYY-MM-DD values throughout prices, publication metadata and
+integrity evaluation. Tickers are nonempty strings, normalized to uppercase.
+The price API accepts a nonempty list/tuple; a bare string is not split into letters.
+Duplicate normalized CSV headers and incorrect cell counts are rejected before
+calculation. Adj Close remains preferred when it is a distinct column from Close.
+
+Evidence indexes cannot refer to the same resolved eligible file twice. Future
+documents are still excluded before opening the file. Malformed and encrypted
+PDFs fail explicitly; scanned PDFs still need external OCR.
+
+The two local tool scripts share one request dispatcher and stream loop.
+Invalid request shapes, parameter types and JSON yield structured errors, and
+processing continues for later lines. JSON-RPC notifications produce no response.
+This framing does not implement the MCP lifecycle or guarantee compatibility with
+MCP clients. See [local tools](local-tools.md) for the deliberately limited contract.
+
 ## Reproducibility
 
 The included 30-observation ALPHA/BETA fixture and reports are synthetic and

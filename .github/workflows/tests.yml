@@ -21,3 +21,11 @@ jobs:
         with:
           name: synthetic-report-${{ matrix.python }}
           path: output/
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag financial-research-ci .
+      - run: docker run --rm financial-research-ci --demo

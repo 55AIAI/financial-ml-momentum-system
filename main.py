@@ -3,11 +3,11 @@ import argparse
 import csv
 import json
 import math
-from datetime import date
 from pathlib import Path
 
 from evidence import load_evidence, retrieve
 from finance_mcp import compute_short_term_signals
+from inputs import iso_date
 
 BASE = Path(__file__).resolve().parent
 
@@ -15,11 +15,11 @@ BASE = Path(__file__).resolve().parent
 def assess_data_quality(signals, as_of, max_price_age_days=7):
     if isinstance(max_price_age_days, bool) or not isinstance(max_price_age_days, int) or max_price_age_days < 0:
         raise ValueError("max_price_age_days must be a nonnegative integer")
-    cutoff = date.fromisoformat(as_of)
+    cutoff = iso_date(as_of)
     ages = {}
     warnings = []
     for row in signals:
-        age = (cutoff - date.fromisoformat(row["price_date"])).days
+        age = (cutoff - iso_date(row["price_date"])).days
         if age < 0:
             raise ValueError("Future price in snapshot")
         ages[row["symbol"]] = age
@@ -76,7 +76,7 @@ def evaluate_report(report):
 
 
 def _evaluate_report(report):
-    cutoff = date.fromisoformat(report["as_of"])
+    cutoff = iso_date(report["as_of"])
     signals = report.get("signals") or []
     symbols = [row["symbol"] for row in signals]
     issues = []
@@ -90,8 +90,8 @@ def _evaluate_report(report):
             issues.append("Momentum does not match component returns")
         if row["last_close"] <= 0 or not 0 < row["weight_pct"] <= 100:
             issues.append("Invalid price or weight")
-        price_date = date.fromisoformat(row["price_date"])
-        window_start = date.fromisoformat(row["risk_window_start"])
+        price_date = iso_date(row["price_date"])
+        window_start = iso_date(row["risk_window_start"])
         if not window_start < price_date <= cutoff:
             issues.append("Invalid price window dates")
         if not 0 <= row["max_drawdown_21_pct"] <= 100 or row["volatility_21_annualized_pct"] < 0:
@@ -107,7 +107,7 @@ def _evaluate_report(report):
     quality = report["data_quality"]
     if quality != assess_data_quality(signals, report["as_of"], quality["max_price_age_days"]):
         issues.append("Data quality diagnostics do not match the price dates")
-    if any(date.fromisoformat(source["published_at"]) > cutoff for source in report["sources"]):
+    if any(iso_date(source["published_at"]) > cutoff for source in report["sources"]):
         issues.append("Future document in snapshot")
     if report.get("agent_notes") is not None:
         from agents import validate_notes
