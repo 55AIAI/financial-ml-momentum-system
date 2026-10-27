@@ -49,8 +49,7 @@ def validate_notes(payload, signals, evidence):
             source = sources.get(citation.source_id)
             if source is None or source["ticker"] not in {note.symbol, "*"}:
                 raise ValueError("Unknown source or evidence belongs to another ticker")
-            normalize = lambda text: " ".join(text.split())
-            if normalize(citation.quote) not in normalize(source["text"]):
+            if " ".join(citation.quote.split()) not in " ".join(source["text"].split()):
                 raise ValueError("Agent quote is not present in its source")
             allowed |= _numbers(citation.quote)
         if not _numbers(note.summary) <= allowed:
